@@ -508,11 +508,27 @@ function recommendGates(B,r){
   return filled;
 }
 
+/* ---------- 不具合の見える化 ---------- */
+// 画面が反応しない時に原因が分かるよう、エラーが起きたら画面の上に赤い帯で表示する（タップで閉じる）。
+// BUILD は、いま開いているのがどの版のファイルか確認するための印（画面上部のタイトルの横に出る）
+const BUILD='1018c';
+function showErr(msg){
+  try{
+    let b=document.getElementById('errbar');
+    if(!b){b=document.createElement('div');b.id='errbar';
+      b.style.cssText='position:fixed;left:8px;right:8px;top:8px;z-index:200;background:#D9736F;color:#fff;padding:8px 12px;border-radius:10px;font-size:12px;line-height:1.4;word-break:break-all';
+      b.onclick=()=>b.remove(); document.body.appendChild(b);}
+    b.textContent='⚠ '+msg+'（タップで閉じる）';
+  }catch(e){}
+}
+window.addEventListener('error',e=>showErr((e.message||'error')+(e.lineno?(' @'+e.lineno):'')));
+window.addEventListener('unhandledrejection',e=>showErr('通信など: '+((e.reason&&e.reason.message)||e.reason)));
+
 /* ---------- 画面 ---------- */
 const TABS=['plan','sum','castle','data'];
 let tab='plan';
 function render(){
-  document.getElementById('ttl').textContent=T('title');
+  document.getElementById('ttl').innerHTML=T('title')+' <span style="font-size:10px;font-weight:400;color:#8A7D6E">v'+BUILD+'</span>';
   document.documentElement.lang=S.lang==='zh'?'zh-Hant':S.lang==='ko'?'ko':'ja';
   document.querySelectorAll('.langs button').forEach(b=>b.classList.toggle('on',b.dataset.l===S.lang));
   const nav=document.getElementById('nav'); nav.innerHTML='';
@@ -573,7 +589,7 @@ function renderPlan(){
   const r1=el('<div class="row"></div>');
   const nb=el('<button class="b p">＋ '+T('newBattle')+'</button>');
   nb.onclick=()=>{const b={id:uid(),date:new Date().toISOString().slice(0,10),rows:[],author:S.authorFilter||'',chk:false,expect:[]}; // 入力者で絞り込み中なら、その人の城戦として作る（作った城戦が絞り込みで隠れて「追加できない」ように見えるのを防ぐ）
-    S.battles.unshift(b);S.cur=b.id;expanded=new Set([b.id]);save();render();};
+    try{S.battles.unshift(b);S.cur=b.id;expanded=new Set([b.id]);save();render();toast('✓ '+b.date+' ('+S.battles.length+')');}catch(err){showErr('城戦を作る処理でエラー: '+err.message);}};
   r1.appendChild(nb);
   const authors=authorList();
   if(authors.length){
