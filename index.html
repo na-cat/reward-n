@@ -482,6 +482,15 @@ function tally(){
 // その日に「この日に入るはずのギルド」(B.expect)が指定されていれば、絞り込みに使う（結果0件になる時は無視する）。
 function recommendGates(B,r){
   const city=CITY[r.c]; if(!city) return 0;
+  let filled=0;
+  // 城主ギルドは専属門（★）を取るのがセオリー。専属門が空いていれば城主を入れる。
+  // （再解放の5ギルド枠では城主は門に入らず別枠なので、ここでは割り当てない）
+  if(r.occ && !r.cap5){
+    const star=slots(r.c).find(sl=>sl.st && sl.g);
+    if(star && !(r.a||{})[star.lv] && !(r.noCalc&&r.noCalc[star.lv])){
+      r.a=r.a||{}; r.a[star.lv]=r.occ; filled++;
+    }
+  }
   const allowedProv=new Set([city.p, ...(PROV_ADJ[city.p]||[])]);
   const already=usedGuilds(r);
   let pool=S.guilds.filter(g=>g.prov!==undefined && g.prov!==null && allowedProv.has(g.prov) && g.n!==r.occ && !already.has(g.n));
@@ -489,10 +498,10 @@ function recommendGates(B,r){
     const filtered=pool.filter(g=>B.expect.includes(g.n));
     if(filtered.length) pool=filtered;
   }
-  if(!pool.length) return 0;
+  if(!pool.length) return filled;
   // 1つのギルドが同じ日に入れる城は1つだけ。同じ日の他の城にすでに入っているギルドは候補から外す
   pool=pool.filter(g=>!otherCastleToday(B,r,g.n));
-  if(!pool.length) return 0;
+  if(!pool.length) return filled;
   const tl=tally();
   const scoreOf=n=>{const row=tl.find(x=>x.n===n); return row?[row.tk,row.bp,row.bx]:[0,0,0];};
   pool=pool.slice().sort((a,b)=>{
@@ -501,7 +510,6 @@ function recommendGates(B,r){
   });
   const emptySlots=slots(r.c).filter(sl=>!(r.a||{})[sl.lv]).sort((a,b)=>b.lv-a.lv); // Lvの高い（良い順位の）門から
   const room=Math.max(0, capOf(r)-already.size); // 1位(occ含むusedGuilds)を含めた現在の使用数から、あと何ギルド入れられるか
-  let filled=0;
   for(let i=0;i<emptySlots.length && i<room && i<pool.length;i++){
     r.a=r.a||{}; r.a[emptySlots[i].lv]=pool[i].n; filled++;
   }
@@ -511,7 +519,7 @@ function recommendGates(B,r){
 /* ---------- 不具合の見える化 ---------- */
 // 画面が反応しない時に原因が分かるよう、エラーが起きたら画面の上に赤い帯で表示する（タップで閉じる）。
 // BUILD は、いま開いているのがどの版のファイルか確認するための印（画面上部のタイトルの横に出る）
-const BUILD='1018c';
+const BUILD='1019a';
 function showErr(msg){
   try{
     let b=document.getElementById('errbar');
