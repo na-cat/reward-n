@@ -512,8 +512,10 @@ function recommendGates(B,r){
   const city=CITY[r.c]; if(!city) return 0;
   let filled=0;
   // 城主ギルドは専属門（★）を取るのがセオリー。専属門が空いていれば城主を入れる。
-  // （再解放の5ギルド枠では城主は門に入らず別枠なので、ここでは割り当てない）
-  if(r.occ && !r.cap5){
+  // 再解放（5ギルド枠）で城主がその日までの持ち主のまま＝守る側なら、門には入らないので割り当てない。
+  // 城主欄が別のギルド（＝その日に城を譲り受ける挑戦者）に替わっていれば、そのギルドは門から入るので専属門に入れる
+  const incumbent=r.cap5?(holderOn(r.c,B.date)||cpOcc(r.c)):'';
+  if(r.occ && (!r.cap5 || r.occ!==incumbent)){
     const star=slots(r.c).find(sl=>sl.st && sl.g);
     if(star && !(r.a||{})[star.lv] && !(r.noCalc&&r.noCalc[star.lv])){
       r.a=r.a||{}; r.a[star.lv]=r.occ; filled++;
@@ -521,7 +523,8 @@ function recommendGates(B,r){
   }
   const allowedProv=new Set([city.p, ...(PROV_ADJ[city.p]||[])]);
   const already=usedGuilds(r);
-  let pool=S.guilds.filter(g=>g.prov!==undefined && g.prov!==null && allowedProv.has(g.prov) && g.n!==r.occ && !already.has(g.n));
+  let pool=S.guilds.filter(g=>g.prov!==undefined && g.prov!==null && allowedProv.has(g.prov) && g.n!==r.occ && !already.has(g.n) && !(incumbent && g.n===incumbent));
+  // ↑譲渡の日の元の城主は、ふつう防衛戦に出ない（他の城に行くこともある）ので、2位以下の候補にもしない
   if(B.expect && B.expect.length){
     const filtered=pool.filter(g=>B.expect.includes(g.n));
     if(filtered.length) pool=filtered;
@@ -547,7 +550,7 @@ function recommendGates(B,r){
 /* ---------- 不具合の見える化 ---------- */
 // 画面が反応しない時に原因が分かるよう、エラーが起きたら画面の上に赤い帯で表示する（タップで閉じる）。
 // BUILD は、いま開いているのがどの版のファイルか確認するための印（画面上部のタイトルの横に出る）
-const BUILD='1019e';
+const BUILD='1019h';
 function showErr(msg){
   try{
     let b=document.getElementById('errbar');
@@ -773,6 +776,17 @@ function fileToImage(file,cb){
 }
 // 城を1つ追加する時の初期値。城取り計画に城主（取る予定のギルド）があれば占拠ギルドに入れておき、
 // その日が再解放日なら5ギルドのチェックも最初から入れておく（どちらも後から自由に変更できる）
+// その日の時点での城主：この台帳で、その日より前に同じ城を記録した一番新しい城戦の1位（占拠ギルド）。
+// 再解放で城主が替われば、その城戦の1位は新しい城主になるので、台帳の記録を順にたどれば「その日の持ち主」が分かる。
+// 記録がない時は空（呼び出し側で城取り計画の割当＝シーズン終了時の持ち主を使う）
+function holderOn(j,date){
+  let best=null;
+  (S.battles||[]).forEach(b=>{
+    if(!b.date || !date || b.date>=date) return;
+    (b.rows||[]).forEach(r=>{ if(r.c===j && r.occ && (!best || b.date>best.d)) best={d:b.date,g:r.occ}; });
+  });
+  return best?best.g:'';
+}
 function newRowFor(B,j){
   const nr={id:uid(),c:j,occ:'',a:{},ex:[],shot:'',synced:false};
   // 城取り計画の割当は「今の（最終的な）城主」で、途中で譲渡などがあれば初回に取ったギルドとは限らない。
@@ -780,8 +794,13 @@ function newRowFor(B,j){
   // また、その日すでに別の城に入っているギルドは入れない（1ギルドが同じ日に入れる城は1つだけ）
   const o=cpOcc(j);
   const upcoming=!!B.date && B.date>=isoOf(new Date());
-  if(o && upcoming && !otherCastleToday(B,null,o)){ addGuild(o); nr.occ=o; }
-  if(castleStatus(j,B.date)==='reopen') nr.cap5=true;
+  const reopen=castleStatus(j,B.date)==='reopen';
+  // 再解放の城は、城取り計画の割当（＝いまの城主）がそのまま防衛側の城主になるので、日付に関係なく自動で入れる。
+  // 城主は守る側なので、同じギルドが同じ日に複数の城の城主になっていても問題ない（1日1城の制限は入場する側の話）
+  const h=reopen?(holderOn(j,B.date)||o):'';
+  if(h && reopen){ addGuild(h); nr.occ=h; }
+  else if(o && upcoming && !otherCastleToday(B,null,o)){ addGuild(o); nr.occ=o; }
+  if(reopen) nr.cap5=true;
   return nr;
 }
 function releaseBox(B){
@@ -1443,6 +1462,21 @@ function importCastlePlan(o){
   if(o.start) S.seasonStart=o.start;
   if(o.assign && typeof o.assign==='object') S.cpAssign=JSON.parse(JSON.stringify(o.assign));
   S.cpU=Date.now();
+  return fillReopenOcc();
+}
+// すでに追加してある再解放の城で、城主が空欄のものに城取り計画の割当を入れる。
+// 過去の城戦は実際の記録を優先して触らない（今日以降の城戦だけ）。入れた行は「これでOK」待ちになる
+function fillReopenOcc(){
+  const today=isoOf(new Date()); let n=0;
+  (S.battles||[]).forEach(B=>{
+    if(!B.date || B.date<today) return;
+    (B.rows||[]).forEach(r=>{
+      if(r.occ || castleStatus(r.c,B.date)!=='reopen') return;
+      const o=cpOcc(r.c); if(!o) return;
+      addGuild(o); r.occ=o; r.cap5=true; r.synced=false; n++;
+    });
+  });
+  return n;
 }
 function autofill(){ // 3体わかっていれば4体目を推定。位置未記録の★門があれば、そこが4体目と分かるので座標も付ける
   Object.keys(S.boss).forEach(j=>{
